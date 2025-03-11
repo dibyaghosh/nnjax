@@ -12,12 +12,14 @@ import contextlib
 static_field = partial(dataclasses.field, metadata=dict(static=True))
 
 
-def dataclass(cls, **kwargs):
+def pytree_dataclass(cls=None, **kwargs):
     """Equivalent to
     @jax.tree_util.register_dataclass
     @dataclasses.dataclass
     class cls:
     """
+    if cls is None:
+        return partial(pytree_dataclass, **kwargs)
     return jax.tree_util.register_dataclass(dataclasses.dataclass(cls, **kwargs))
 
 

@@ -4,60 +4,72 @@ import jax.nn as nn
 from jaxtyping import Float, Array, Key, Int
 import jax.numpy as jnp
 import jax
-from nnjax import pytree_dataclass, static_field
+from nnjax import dataclass, static_field
 import nnjax
 import einops
-from functools import partial
 import dataclasses
+from functools import partial
 
 Dtypelike = jnp.dtype | str
 
 
 @dataclasses.dataclass  # just a normal dataclass
-class ViTConfig:
+class GemmaConfig:
     width: int
     depth: int
     mlp_dim: int
     num_heads: int
+    num_kv_heads: int
     head_dim: int
-    patch_size: int
-    dropout: float = 0.0
-    image_size: int | None = 224
+    norm_eps: float
+    vocab_size: int
+    dtype: Dtypelike
+    remat_policy: str
 
     @classmethod
-    def B16(cls):
+    def gemma_2b(cls, dtype: Dtypelike = "float32"):
         return cls(
-            width=768,
-            depth=12,
-            mlp_dim=3072,
-            num_heads=12,
-            head_dim=64,
-            dropout=0.0,
-            patch_size=16,
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            norm_eps=1e-6,
+            vocab_size=256_000,
+            dtype=dtype,
+            remat_policy="nothing_saveable",
         )
 
 
-@pytree_dataclass
+@dataclass
 class Einsum:
     kernel: jax.Array
-    bias: jax.Array | None
+
+    mm_dtype: Dtypelike = static_field()
+    param_dtype: Dtypelike = static_field()
 
     def __call__(self, x, pattern: str):
+        assert x.dtype == 
         x = jnp.einsum(pattern, x, self.kernel)
         if self.bias is not None:
             x = x + self.bias
         return x
 
 
-def dropout(x, train: bool, rate: float, key: Key | None = None):
-    if not train or rate == 0.0:
-        return x
+@dataclass
+class Dropout:
+    rate: float = static_field()
 
-    mask = jax.random.bernoulli(key, 1 - rate, x.shape)
-    return jnp.where(mask, x / (1 - rate), 0.0)
+    def __call__(self, x, train: bool, key: Key | None = None):
+        if not train or self.rate == 0.0:
+            return x
+
+        mask = jax.random.bernoulli(key, 1 - self.rate, x.shape)
+        return jnp.where(mask, x / (1 - self.rate), 0.0)
 
 
-@pytree_dataclass
+@dataclass
 class LayerNorm:
     scale: jax.Array
     bias: jax.Array
@@ -86,20 +98,11 @@ class LayerNorm:
         return cls(scale, bias, eps)
 
 
-@pytree_dataclass
+@dataclass
 class MlpBlock:
-    Dense_0: Einsum
     Dense_1: Einsum
-    dropout_rate: float = static_field()
-
-    def __call__(
-        self, x: Float[Array, "b l d"], train: bool, key: Key | None = None
-    ) -> Float[Array, "b l d"]:
-        x = self.Dense_0(x, "bld,dm->blm")
-        x = nn.gelu(x)
-        x = self.Dense_1(x, "blm,md->bld")
-        x = dropout(x, train, self.dropout_rate, key)
-        return x
+    Dense_2: Einsum
+    dropout: Dropout
 
     @classmethod
     def create(
@@ -107,24 +110,33 @@ class MlpBlock:
         key: jax.Array,
         embedding_dim: int,
         mlp_dim: int,
-        dropout_rate: float,
+        dropout: float,
+        kernel_init: callable,
+        bias_init: callable,
     ):
-        kernel_init = nn.initializers.xavier_uniform()
-        bias_init = nn.initializers.normal(stddev=1e-6)
-
-        key, key_dense_0, key_dense_1 = jax.random.split(key, 3)
-        dense_0 = Einsum(
-            kernel=kernel_init(key_dense_0, (embedding_dim, mlp_dim)),
-            bias=bias_init(key_dense_0, (mlp_dim,)),
-        )
+        key, key_dense_1, key_dense_2 = jax.random.split(key, 3)
         dense_1 = Einsum(
-            kernel=kernel_init(key_dense_1, (mlp_dim, embedding_dim)),
-            bias=bias_init(key_dense_1, (embedding_dim,)),
+            kernel=kernel_init(key_dense_1, (embedding_dim, mlp_dim)),
+            bias=bias_init(key_dense_1, (mlp_dim,)),
         )
-        return cls(dense_0, dense_1, dropout_rate)
+        dense_2 = Einsum(
+            kernel=kernel_init(key_dense_2, (mlp_dim, embedding_dim)),
+            bias=bias_init(key_dense_2, (embedding_dim,)),
+        )
+        dropout = Dropout(rate=dropout)
+        return cls(dense_1, dense_2, dropout)
+
+    def __call__(
+        self, x: Float[Array, "b l d"], train: bool, key: Key | None = None
+    ) -> Float[Array, "b l d"]:
+        x = self.Dense_1(x, "bld,dm->blm")
+        x = nn.gelu(x)
+        x = self.Dense_2(x, "blm,md->bld")
+        x = self.dropout(x, train, key)
+        return x
 
 
-@pytree_dataclass
+@dataclass
 class AttentionBlock:
     query: Einsum
     key: Einsum
@@ -134,29 +146,16 @@ class AttentionBlock:
     num_heads: int = static_field()
     head_dim: int = static_field()
 
-    def __call__(
-        self, x: Float[Array, "b l d"], mask: Float[Array, "b 1 l l"] | None = None
-    ) -> Float[Array, "b l d"]:
-        dtype = x.dtype
-        q = self.query(x, "bld,dnh->blnh")
-        k = self.key(x, "bld,dnh->blnh")
-        v = self.value(x, "bld,dnh->blnh")
-
-        q = q / jnp.sqrt(self.head_dim).astype(dtype)
-        attn_logits = jnp.einsum("bqnh,bknh->bnqk", q, k)
-        if mask is not None:
-            attn_logits = jnp.where(mask, attn_logits, jnp.finfo(dtype).min)
-        attn_weights = nn.softmax(attn_logits, axis=-1)
-        out = jnp.einsum("bnqk, bknh -> bqnh", attn_weights, v)
-        out = self.out(out, "bqnh,nhd->bqd")
-        return out
-
     @classmethod
     def create(
-        cls, key: jax.Array, *, embedding_dim: int, num_heads: int, head_dim: int
+        cls,
+        key: jax.Array,
+        embedding_dim: int,
+        num_heads: int,
+        head_dim: int,
+        kernel_init: callable,
+        bias_init: callable,
     ):
-        kernel_init = nn.initializers.xavier_uniform()
-        bias_init = nn.initializers.zeros
         key, key_q_proj, key_k_proj, key_v_proj, key_out_proj = jax.random.split(key, 5)
         query = Einsum(
             kernel=kernel_init(key_q_proj, (embedding_dim, num_heads, head_dim)),
@@ -176,16 +175,37 @@ class AttentionBlock:
         )
         return cls(query, key, value, out, num_heads, head_dim)
 
+    def __call__(
+        self, x: Float[Array, "b l d"], mask: Float[Array, "b 1 l l"] | None = None
+    ) -> Float[Array, "b l d"]:
+        dtype = x.dtype
+        q = self.query(x, "bld,dnh->blnh")
+        k = self.key(x, "bld,dnh->blnh")
+        v = self.value(x, "bld,dnh->blnh")
 
-@pytree_dataclass
+        q = q / jnp.sqrt(self.head_dim).astype(dtype)
+        attn_logits = jnp.einsum("bqnh,bknh->bnqk", q, k)
+        if mask is not None:
+            attn_logits = jnp.where(mask, attn_logits, jnp.finfo(dtype).min)
+        nnjax.capture(("attn_logits",), attn_logits)
+        attn_weights = nn.softmax(attn_logits, axis=-1)
+        nnjax.capture(("attn_weights",), attn_weights)
+        out = jnp.einsum("bnqk, bknh -> bqnh", attn_weights, v)
+        nnjax.capture(("post_attn",), out)
+
+        out = self.out(out, "bqnh,nhd->bqd")
+        return out
+
+
+@dataclass
 class TransformerLayer:
     ln1: LayerNorm
     attn: AttentionBlock
+    drop1: Dropout
 
     ln2: LayerNorm
     mlp: MlpBlock
-
-    dropout_rate: float = static_field()
+    drop2: Dropout
 
     def __call__(
         self,
@@ -204,13 +224,13 @@ class TransformerLayer:
         # Attn
         y = self.ln1(out)
         y = out_dict["sa"] = self.attn(y, mask)
-        y = dropout(y, train, self.dropout_rate, keys[0])
+        y = self.drop1(y, train, keys[0])
         out = out_dict["+sa"] = out + y
 
         # MLP
         y = self.ln2(out)
         y = out_dict["mlp"] = self.mlp(y, train, keys[1])
-        y = dropout(y, train, self.dropout_rate, keys[2])
+        y = self.drop2(y, train, keys[2])
         out = out_dict["+mlp"] = out + y
         return out, out_dict
 
@@ -220,21 +240,27 @@ class TransformerLayer:
         ln1 = LayerNorm.create(keys[0], config.width)
         attn = AttentionBlock.create(
             keys[1],
-            embedding_dim=config.width,
-            num_heads=config.num_heads,
-            head_dim=config.head_dim,
+            config.width,
+            config.num_heads,
+            config.head_dim,
+            kernel_init=nn.initializers.xavier_uniform(),
+            bias_init=nn.initializers.zeros,
         )
+        drop1 = Dropout(config.dropout)
         ln2 = LayerNorm.create(keys[2], config.width)
         mlp = MlpBlock.create(
             keys[3],
-            embedding_dim=config.width,
-            mlp_dim=config.mlp_dim,
-            dropout_rate=config.dropout,
+            config.width,
+            config.mlp_dim,
+            config.dropout,
+            kernel_init=nn.initializers.xavier_uniform(),
+            bias_init=nn.initializers.normal(stddev=1e-6),
         )
-        return cls(ln1, attn, ln2, mlp, dropout_rate=config.dropout)
+        drop2 = Dropout(config.dropout)
+        return cls(ln1, attn, drop1, ln2, mlp, drop2)
 
 
-@pytree_dataclass
+@dataclass
 class Transformer:
     layers: TransformerLayer
     final_ln: LayerNorm
@@ -269,7 +295,7 @@ class Transformer:
         return cls(layers, final_ln, config.depth)
 
 
-@pytree_dataclass
+@dataclass
 class ImageEmbedding:
     embedding: Einsum
     pos_embedding: jax.Array
@@ -288,9 +314,8 @@ class ImageEmbedding:
         )
         return self.embedding(flattened_patches, "blp,pd->bld") + self.pos_embedding
 
-    @classmethod
     def create(
-        cls,
+        self,
         key: jax.Array,
         patch_size: int,
         embedding_dim: int,
@@ -312,7 +337,7 @@ class ImageEmbedding:
         return ImageEmbedding(embedding, pos_embedding, patch_size=patch_size)
 
 
-@pytree_dataclass
+@dataclass
 class ViT:
     embedding: ImageEmbedding
     transformer: Transformer
@@ -339,29 +364,74 @@ class ViT:
 
     @classmethod
     def create_from_pretrained(cls, pretrained_params: dict, config: ViTConfig):
-        embedding_params = pretrained_params["embedding"]
-        encoder_params = pretrained_params["Transformer"]["encoderblock"]
-
-        param_dict = {
-            "embedding": {
-                "embedding": {
-                    "kernel": embedding_params["kernel"].reshape(-1, 768),
-                    "bias": embedding_params["bias"],
-                },
-                "pos_embedding": pretrained_params["pos_embedding"],
-            },
-            "transformer": {
-                "layers": {
-                    "ln1": encoder_params["LayerNorm_0"],
-                    "attn": encoder_params["MultiHeadDotProductAttention_0"],
-                    "ln2": encoder_params["LayerNorm_1"],
-                    "mlp": encoder_params["MlpBlock_0"],
-                },
-                "final_ln": pretrained_params["Transformer"]["encoder_norm"],
-            },
-        }
-
-        abstract_model = jax.eval_shape(
-            partial(ViT.create, config=config, key=jax.random.PRNGKey(0))
+        embedding = ImageEmbedding(
+            embedding=Einsum(
+                kernel=pretrained_params["embedding"]["kernel"].reshape(-1, 768),
+                bias=pretrained_params["embedding"]["bias"],
+            ),
+            pos_embedding=pretrained_params["pos_embedding"],
+            patch_size=config.patch_size,
         )
-        return nnjax.merge(abstract_model, param_dict)
+        encoder_params = pretrained_params["Transformer"]["encoderblock"]
+        # fmt: off
+        ln1 = LayerNorm(
+            scale=encoder_params['LayerNorm_0']['scale'],
+            bias=encoder_params['LayerNorm_0']['bias'],
+        )
+        attn_params = encoder_params["MultiHeadDotProductAttention_0"]
+        query = Einsum(
+            kernel=attn_params["query"]["kernel"],
+            bias=attn_params["query"]["bias"]
+        )
+        key = Einsum(
+            kernel=attn_params["key"]["kernel"],
+            bias=attn_params["key"]["bias"]
+        )
+        value = Einsum(
+            kernel=attn_params["value"]["kernel"],
+            bias=attn_params["value"]["bias"]
+        )
+        out = Einsum(
+            kernel=attn_params["out"]["kernel"],
+            bias=attn_params["out"]["bias"],
+        )
+        attn = AttentionBlock(
+            query=query,
+            key=key,
+            value=value,
+            out=out,
+            num_heads=config.num_heads,
+            head_dim=config.head_dim,
+        )
+        drop1 = Dropout(config.dropout)
+
+        ln2 = LayerNorm(
+            scale=encoder_params['LayerNorm_1']['scale'],
+            bias=encoder_params['LayerNorm_1']['bias'],
+            eps=1e-6,
+        )
+
+        mlp_params = encoder_params["MlpBlock_0"]
+        mlp = MlpBlock(
+            Dense_1=Einsum(
+                kernel=mlp_params["Dense_0"]["kernel"],
+                bias=mlp_params["Dense_0"]["bias"]
+            ),
+            Dense_2=Einsum(
+                kernel=mlp_params["Dense_1"]["kernel"],
+                bias=mlp_params["Dense_1"]["bias"]
+            ),
+            dropout=Dropout(config.dropout)
+        )
+        drop2 = Dropout(config.dropout)
+        # fmt: on
+
+        transformer = Transformer(
+            layers=TransformerLayer(ln1, attn, drop1, ln2, mlp, drop2),
+            final_ln=LayerNorm(
+                scale=pretrained_params["Transformer"]["encoder_norm"]["scale"],
+                bias=pretrained_params["Transformer"]["encoder_norm"]["bias"],
+            ),
+            num_layers=config.depth,
+        )
+        return cls(embedding, transformer)

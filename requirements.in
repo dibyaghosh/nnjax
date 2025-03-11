@@ -1,0 +1,10 @@
+jax[tpu]
+orbax-checkpoint
+numpy
+flax
+wandb
+pyyaml
+gcsfs
+jaxtyping
+einops
+pillow

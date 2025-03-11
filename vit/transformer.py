@@ -4,8 +4,8 @@ import jax.nn as nn
 from jaxtyping import Float, Array, Key, Int
 import jax.numpy as jnp
 import jax
-from utils import dataclass, static_field
-import utils
+from nnjax import dataclass, static_field
+import nnjax
 import einops
 import dataclasses
 from functools import partial
@@ -178,11 +178,11 @@ class AttentionBlock:
         attn_logits = jnp.einsum("bqnh,bknh->bnqk", q, k)
         if mask is not None:
             attn_logits = jnp.where(mask, attn_logits, jnp.finfo(dtype).min)
-        utils.capture(("attn_logits",), attn_logits)
+        nnjax.capture(("attn_logits",), attn_logits)
         attn_weights = nn.softmax(attn_logits, axis=-1)
-        utils.capture(("attn_weights",), attn_weights)
+        nnjax.capture(("attn_weights",), attn_weights)
         out = jnp.einsum("bnqk, bknh -> bqnh", attn_weights, v)
-        utils.capture(("post_attn",), out)
+        nnjax.capture(("post_attn",), out)
 
         out = self.out(out, "bqnh,nhd->bqd")
         return out
@@ -274,7 +274,7 @@ class Transformer:
             split_keys = jax.random.split(jax.random.PRNGKey(0), self.num_layers)
         else:
             split_keys = jax.random.split(key, self.num_layers)
-        x, carry = utils.scan(body, x, (self.layers, split_keys))
+        x, carry = nnjax.scan(body, x, (self.layers, split_keys))
         return self.final_ln(x), carry
 
     @classmethod

@@ -143,3 +143,7 @@ def capture(name, value):
         if name not in _INTERMEDIATES:
             _INTERMEDIATES[name] = []
         _INTERMEDIATES[name].append(value)
+
+
+def repo_path():
+    return epath.Path(__file__).parent

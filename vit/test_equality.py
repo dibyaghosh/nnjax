@@ -3,6 +3,7 @@ import flax
 import vit.reference as reference_vit
 import vit.transformer as new_vit
 import jax
+import nnjax
 
 
 def _load_params(path):
@@ -39,10 +40,11 @@ def _cossim(a, b, axis=None):
 
 
 def test_equality():
-    params = _load_params("/home/dibya/nfs/siglip2_b16_224.npz")
+    repo_path = nnjax.repo_path()
+    params = _load_params(repo_path / "../../siglip2_b16_224.npz")
     from PIL import Image
 
-    image = np.asarray(Image.open("cat.jpg").resize((224, 224)))
+    image = np.asarray(Image.open(repo_path / "vit/cat.jpg").resize((224, 224)))
     images = image[None]
     reference_output = _run_reference(params, images)
     reference_output = reference_output[1]["encoded"]

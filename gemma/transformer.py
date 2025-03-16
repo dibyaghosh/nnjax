@@ -109,7 +109,7 @@ class FeedForward:
     linear: Float[Array, "hidden_dim features"]
     dtype: Dtypelike = static_field()
 
-    def __call__(self, x: Float[Array, "b l d"]):
+    def __call__(self, x: Float[Array, "b l d"]):#
         ff_gate, ff1 = jnp.einsum("bld,2dh->2blh", x.astype(self.dtype), self.gating_einsum.astype(self.dtype))
         activations = nn.gelu(ff_gate) * ff1
         out = jnp.einsum("blh,hd->bld", activations, self.linear.astype(self.dtype))
@@ -288,18 +288,21 @@ class TransformerLayer:
     ) -> Float[Array, "b l d"]:
         out = x
         # Attn
-        y = self.pre_attention_norm(out)
+        y = nnjax.capture("pre_attention_norm", self.pre_attention_norm(out))
         y, kv_cache = self.attn(y, positions, mask, kv_cache, cache_idx)
+        nnjax.capture("attn", y)
         if self.post_attention_norm is not None:
             y = self.post_attention_norm(y)
+            nnjax.capture("post_attention_norm", y)
         out = out + y
 
         # MLP
-        y = self.pre_ffw_norm(out)
-        y = self.mlp(y)
+        y = nnjax.capture("pre_ffw_norm", self.pre_ffw_norm(out))
+        y = nnjax.capture("mlp", self.mlp(y))
         if self.post_ffw_norm is not None:
-            y = self.post_ffw_norm(y)
+            y = nnjax.capture("post_ffw_norm", self.post_ffw_norm(y))
         out = out + y
+        nnjax.capture("outputs", out)
         return out, kv_cache
 
     @classmethod
@@ -362,6 +365,7 @@ class Transformer:
             )
 
         x, carry = nnjax.scan(body, x, (self.layers, kv_cache))
+        nnjax.capture("encoded", x)
         return self.final_norm(x), carry
 
     @classmethod
@@ -417,6 +421,7 @@ class Gemma:
         b, l = tokens.shape
 
         embeddings = self.embedder.encode(tokens).astype(self.dtype)
+        nnjax.capture("embeddings", embeddings)
 
         if positions is None:
             positions = jnp.broadcast_to(jnp.arange(l).astype(jnp.int32)[None, :], (b, l))
@@ -436,9 +441,12 @@ class Gemma:
         output_embeddings, new_kv_cache = self.transformer(
             embeddings, positions, mask=mask, kv_cache=kv_cache, cache_idx=cache_idx
         )
+        nnjax.capture("pre_logits", output_embeddings)
         logits = self.embedder.decode(output_embeddings)
+        nnjax.capture("logits_pre_norm", logits)
         if self.final_logits_softcap is not None:
             logits = jnp.tanh(logits / self.final_logits_softcap) * self.final_logits_softcap
+        nnjax.capture("logits", logits)
         return logits, new_kv_cache
 
     def init_cache(

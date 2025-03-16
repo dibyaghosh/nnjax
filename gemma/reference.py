@@ -347,7 +347,7 @@ class FeedForward(nn.Module):
             trunc_norm_init(in_axis=(1,), out_axis=(0, 2), batch_axis=()),
             ((2, self.features, self.hidden_dim)),
         )
-        ff_gate = jnp.dot(x, w_gating[0])
+        ff_gate = jnp.dot(x, w_gating[0])        
         gate_value = nn.gelu(ff_gate)
 
         ff1 = jnp.dot(x, w_gating[1])
@@ -359,7 +359,6 @@ class FeedForward(nn.Module):
             (self.hidden_dim, self.features),
         )
         outputs = jnp.dot(activations, w_linear)
-
         return outputs
 
 
@@ -405,22 +404,25 @@ class Block(nn.Module):
         self, x, unused_scan_arg, positions, attn_mask, decode, deterministic=True
     ):
         x = nn.with_logical_constraint(x, ("act_batch", "act_len", "act_emb"))
-        inputs_normalized = self.pre_attention_norm(x)
-        attn_output = self.attn(
+        out = {}
+
+        inputs_normalized = out["pre_attention_norm"] = self.pre_attention_norm(x)
+        attn_output = out["attn"] = self.attn(
             inputs_normalized, positions, attn_mask, decode, deterministic
         )
         if self.post_norms:
-            attn_output = self.post_attention_norm(attn_output)
+            attn_output = out["post_attention_norm"] = self.post_attention_norm(attn_output)
         attn_output = self.drop(attn_output, deterministic)
         attn_output += x
         residual = attn_output
-        attn_output = self.pre_ffw_norm(attn_output)
-        outputs = self.mlp(attn_output)
+        attn_output = out["pre_ffw_norm"] = self.pre_ffw_norm(attn_output)
+        outputs = out["mlp"] = self.mlp(attn_output)
         outputs = self.drop(outputs, deterministic)
         if self.post_norms:
-            outputs = self.post_ffw_norm(outputs)
+            outputs = out["post_ffw_norm"] = self.post_ffw_norm(outputs)
         outputs = residual + outputs
-        return outputs, unused_scan_arg
+        out["outputs"] = outputs
+        return outputs, out
 
 
 class Model(nn.Module):
@@ -502,6 +504,7 @@ class Model(nn.Module):
 
         x = jnp.concatenate(x, axis=-2)
         x = x.astype(self.embed_dtype)
+        out["embeddings"] = x
         batch_size, seq_len, width = x.shape
 
         if embed_only:
@@ -566,10 +569,9 @@ class Model(nn.Module):
                 )
                 for layer in range(self.depth)
             ]
-        unused_scan_arg = ()
         for block in blocks:
-            x, unused_scan_arg = block(
-                x, unused_scan_arg, positions, mask, decode, deterministic
+            x, out["scan"] = block(
+                x, (), positions, mask, decode, deterministic
             )
 
         assert x.dtype == jnp.dtype(self.embed_dtype)  # Sanity check.

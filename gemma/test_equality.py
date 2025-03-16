@@ -2,6 +2,7 @@ import numpy as np
 import flax
 from gemma import reference, transformer, sampler  # noqa
 import jax
+import jax.numpy as jnp
 import nnjax
 
 import orbax.checkpoint as ocp
@@ -47,28 +48,38 @@ def _run_reference(params, tokens):
 @jax.jit
 def _run_ours(params, tokens):
     model = transformer.Gemma.create_from_pretrained(params, transformer.GemmaConfig.gemma2_2b())
-    return model(tokens)
+    intermediates = {}
+    with nnjax.capture_intermediates(intermediates):
+        logits, _ = model(tokens)
+    return logits, intermediates
 
 
 def _cossim(a, b, axis=None):
     ab = (a * b).sum(axis=axis)
     a_norm = (a * a).sum(axis=axis)
     b_norm = (b * b).sum(axis=axis)
-    return ab * jax.lax.rsqrt(a_norm * b_norm + 1e-8)
+    return ab * jax.lax.rsqrt(a_norm * b_norm)
 
 
 def test_equality():
-    repo_path = nnjax.repo_path()
-    params = _load_params(repo_path / "../../siglip2_b16_224.npz")
-    from PIL import Image
+    params = _load_params()
+    tokenizer = _load_tokenizer()
+    tokens = tokenizer.encode("Continue this sequence: 1 1 2 3 5", add_bos=True)
+    tokens = jnp.array(tokens)[None]
+    _, reference_extra = _run_reference(params, tokens)
+    _, pred_extra = _run_ours(params, tokens)
+    print(_cossim(reference_extra["encoded"], pred_extra["encoded"], axis=-1))
+    assert jnp.all(_cossim(reference_extra["encoded"], pred_extra["encoded"]) > 0.99)
 
-    image = np.asarray(Image.open(repo_path / "vit/cat.jpg").resize((224, 224)))
-    images = image[None]
-    reference_output = _run_reference(params, images)
-    reference_output = reference_output[1]["encoded"]
-    our_output, _ = _run_ours(params, images)
-    print(_cossim(reference_output, our_output))
-    assert _cossim(reference_output, our_output) > 0.99
+    sampled_tokens = sample(params, tokens)
+    print(sampled_tokens)
+    print("Continue this sequence: 1 1 2 3 5")
+    print(tokenizer.decode(sampled_tokens[0].tolist()))
+
+@jax.jit
+def sample(params, tokens):
+    model = transformer.Gemma.create_from_pretrained(params, transformer.GemmaConfig.gemma2_2b())
+    return sampler.sample(model, tokens, jnp.ones_like(tokens, dtype=jnp.int32), 32, 1, jax.random.PRNGKey(0))
 
 
 if __name__ == "__main__":

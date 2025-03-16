@@ -133,7 +133,8 @@ def scan(fn, *args, **kwargs):
         return carry, (out, intermediates)
 
     carry, (out, intermediates) = jax.lax.scan(wrapper, *args, **kwargs)
-    _INTERMEDIATES["scan"] = intermediates
+    if len(intermediates) > 0:
+        _INTERMEDIATES["scan"] = intermediates
     return carry, out
 
 
@@ -142,9 +143,9 @@ scan.__doc__ = jax.lax.scan.__doc__
 
 def capture(name, value):
     if _INTERMEDIATES is not None:
-        if name not in _INTERMEDIATES:
-            _INTERMEDIATES[name] = []
-        _INTERMEDIATES[name].append(value)
+        assert name not in _INTERMEDIATES, f"Intermediate {name} already exists"
+        _INTERMEDIATES[name] = value
+    return value
 
 
 def repo_path():

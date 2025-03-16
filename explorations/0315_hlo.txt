@@ -1,0 +1,227 @@
+BasicTransformerLayer(Wqkv=PartitionSpec(None, None, None), Wout=PartitionSpec(None, None), Wmlp1=PartitionSpec(None, None), Wmlp2=PartitionSpec(None, None), ln1_scale=PartitionSpec(None,), ln2_scale=PartitionSpec(None,))
+y = pp(rmsnorm(x, self.ln1_scale)):  (PartitionSpec('X',), (32, 10, 16))
+q, k, v = pp(jnp.einsum('bld,3dh->3blh', y, self.Wqkv)):  (PartitionSpec(None, 'X'), (3, 32, 10, 16))
+attn = pp(jnp.einsum('bqh,bkh->bqk', q, k)):  (PartitionSpec('X',), (32, 10, 10))
+out = pp(jnp.einsum('bqk,bkh->bqh', attn, v)):  (PartitionSpec('X',), (32, 10, 16))
+out = pp(jnp.einsum('bqh,hd->bqd', out, self.Wout)):  (PartitionSpec('X',), (32, 10, 16))
+y = pp(rmsnorm(residual, self.ln2_scale)):  (PartitionSpec('X',), (32, 10, 16))
+mlp = pp(jnp.einsum('bld,dm->blm', y, self.Wmlp1)):  (PartitionSpec('X',), (32, 10, 64))
+mlp = pp(jnp.einsum('blm,md->bld', mlp, self.Wmlp2)):  (PartitionSpec('X',), (32, 10, 16))
+HloModule jit__lambda_, is_scheduled=true, entry_computation_layout={(f32[3,16,16]{2,1,0}, f32[16,16]{1,0}, f32[16,64]{1,0}, f32[64,16]{1,0}, f32[16]{0}, /*index=5*/f32[16]{0}, f32[4,10,16]{2,1,0})->f32[4,10,16]{2,1,0}}, allow_spmd_sharding_propagation_to_parameters={false,false,false,false,false,false,false}, allow_spmd_sharding_propagation_to_output={true}, num_partitions=8
+
+%region_0.29 (Arg_0.30: f32[], Arg_1.31: f32[]) -> f32[] {
+  %Arg_0.30 = f32[] parameter(0), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum"}
+  %Arg_1.31 = f32[] parameter(1), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum"}
+  ROOT %add.32 = f32[] add(f32[] %Arg_0.30, f32[] %Arg_1.31), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=5}
+}
+
+%region_1.61 (Arg_0.62: f32[], Arg_1.63: f32[]) -> f32[] {
+  %Arg_0.62 = f32[] parameter(0), metadata={op_name="jit(<lambda>)/jit(main)/reduce_max"}
+  %Arg_1.63 = f32[] parameter(1), metadata={op_name="jit(<lambda>)/jit(main)/reduce_max"}
+  ROOT %maximum.64 = f32[] maximum(f32[] %Arg_0.62, f32[] %Arg_1.63), metadata={op_name="jit(<lambda>)/jit(main)/reduce_max" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+}
+
+%region_2.73 (Arg_0.74: f32[], Arg_1.75: f32[]) -> f32[] {
+  %Arg_0.74 = f32[] parameter(0), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum"}
+  %Arg_1.75 = f32[] parameter(1), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum"}
+  ROOT %add.76 = f32[] add(f32[] %Arg_0.74, f32[] %Arg_1.75), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+}
+
+%region_3.89 (Arg_0.90: f32[], Arg_1.91: f32[]) -> f32[] {
+  %Arg_0.90 = f32[] parameter(0), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum"}
+  %Arg_1.91 = f32[] parameter(1), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum"}
+  ROOT %add.92 = f32[] add(f32[] %Arg_0.90, f32[] %Arg_1.91), metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=5}
+}
+
+%fused_computation (param_0.1: f32[4,10,16], param_1.1: f32[40,16]) -> f32[4,10,16] {
+  %param_1.1 = f32[40,16]{1,0} parameter(1)
+  %bitcast.12 = f32[4,10,16]{2,1,0} bitcast(f32[40,16]{1,0} %param_1.1), metadata={op_name="jit(<lambda>)/jit(main)/blm,md->bld/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=34}
+  %param_0.1 = f32[4,10,16]{2,1,0} parameter(0)
+  ROOT %add.10 = f32[4,10,16]{2,1,0} add(f32[4,10,16]{2,1,0} %bitcast.12, f32[4,10,16]{2,1,0} %param_0.1), metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=35}
+}
+
+%fused_computation.1 (param_0.5: f32[40,64]) -> f32[40,64] {
+  %param_0.5 = f32[40,64]{1,0} parameter(0)
+  %bitcast.14 = f32[4,10,64]{2,1,0} bitcast(f32[40,64]{1,0} %param_0.5), metadata={op_name="jit(<lambda>)/jit(main)/bld,dm->blm/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=32}
+  %multiply.26 = f32[4,10,64]{2,1,0} multiply(f32[4,10,64]{2,1,0} %bitcast.14, f32[4,10,64]{2,1,0} %bitcast.14), metadata={op_name="jit(<lambda>)/jit(main)/integer_pow" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %multiply.25 = f32[4,10,64]{2,1,0} multiply(f32[4,10,64]{2,1,0} %multiply.26, f32[4,10,64]{2,1,0} %bitcast.14), metadata={op_name="jit(<lambda>)/jit(main)/integer_pow" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %constant.53 = f32[] constant(0.044715)
+  %broadcast.54 = f32[4,10,64]{2,1,0} broadcast(f32[] %constant.53), dimensions={}
+  %multiply.24 = f32[4,10,64]{2,1,0} multiply(f32[4,10,64]{2,1,0} %multiply.25, f32[4,10,64]{2,1,0} %broadcast.54), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %add.12 = f32[4,10,64]{2,1,0} add(f32[4,10,64]{2,1,0} %bitcast.14, f32[4,10,64]{2,1,0} %multiply.24), metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %constant.52 = f32[] constant(0.797884583)
+  %broadcast.53 = f32[4,10,64]{2,1,0} broadcast(f32[] %constant.52), dimensions={}
+  %multiply.23 = f32[4,10,64]{2,1,0} multiply(f32[4,10,64]{2,1,0} %add.12, f32[4,10,64]{2,1,0} %broadcast.53), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %tanh.1 = f32[4,10,64]{2,1,0} tanh(f32[4,10,64]{2,1,0} %multiply.23), metadata={op_name="jit(<lambda>)/jit(main)/tanh" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %constant.54 = f32[] constant(1)
+  %broadcast.52 = f32[4,10,64]{2,1,0} broadcast(f32[] %constant.54), dimensions={}
+  %add.11 = f32[4,10,64]{2,1,0} add(f32[4,10,64]{2,1,0} %tanh.1, f32[4,10,64]{2,1,0} %broadcast.52), metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %constant.51 = f32[] constant(0.5)
+  %broadcast.51 = f32[4,10,64]{2,1,0} broadcast(f32[] %constant.51), dimensions={}
+  %multiply.22 = f32[4,10,64]{2,1,0} multiply(f32[4,10,64]{2,1,0} %add.11, f32[4,10,64]{2,1,0} %broadcast.51), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %multiply.21 = f32[4,10,64]{2,1,0} multiply(f32[4,10,64]{2,1,0} %bitcast.14, f32[4,10,64]{2,1,0} %multiply.22), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  ROOT %bitcast.13 = f32[40,64]{1,0} bitcast(f32[4,10,64]{2,1,0} %multiply.21), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+}
+
+%fused_computation.2 (param_0.8: f32[16], param_1.11: f32[4,10,16], param_2.11: f32[4,16]) -> f32[40,16] {
+  %param_1.11 = f32[4,10,16]{2,1,0} parameter(1)
+  %param_2.11 = f32[4,16]{1,0} parameter(2)
+  %broadcast.56 = f32[4,10,16]{2,1,0} broadcast(f32[4,16]{1,0} %param_2.11), dimensions={0,2}, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %multiply.29 = f32[4,10,16]{2,1,0} multiply(f32[4,10,16]{2,1,0} %param_1.11, f32[4,10,16]{2,1,0} %broadcast.56), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %param_0.8 = f32[16]{0} parameter(0)
+  %constant.55 = f32[] constant(1)
+  %broadcast.57 = f32[16]{0} broadcast(f32[] %constant.55), dimensions={}
+  %add.13 = f32[16]{0} add(f32[16]{0} %param_0.8, f32[16]{0} %broadcast.57), metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %broadcast.55 = f32[4,10,16]{2,1,0} broadcast(f32[16]{0} %add.13), dimensions={2}, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %multiply.27 = f32[4,10,16]{2,1,0} multiply(f32[4,10,16]{2,1,0} %multiply.29, f32[4,10,16]{2,1,0} %broadcast.55), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  ROOT %bitcast.15 = f32[40,16]{1,0} bitcast(f32[4,10,16]{2,1,0} %multiply.27), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+}
+
+%fused_computation.3 (param_0.12: f32[4,16]) -> f32[4,16] {
+  %param_0.12 = f32[4,16]{1,0} parameter(0)
+  %constant.57 = f32[] constant(0.1)
+  %broadcast.59 = f32[4,16]{1,0} broadcast(f32[] %constant.57), dimensions={}
+  %multiply.30 = f32[4,16]{1,0} multiply(f32[4,16]{1,0} %param_0.12, f32[4,16]{1,0} %broadcast.59), metadata={op_name="jit(<lambda>)/jit(main)/div" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=5}
+  %constant.56 = f32[] constant(1e-05)
+  %broadcast.58 = f32[4,16]{1,0} broadcast(f32[] %constant.56), dimensions={}
+  %add.14 = f32[4,16]{1,0} add(f32[4,16]{1,0} %multiply.30, f32[4,16]{1,0} %broadcast.58), metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  ROOT %rsqrt.4 = f32[4,16]{1,0} rsqrt(f32[4,16]{1,0} %add.14), metadata={op_name="jit(<lambda>)/jit(main)/rsqrt" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+}
+
+%fused_computation.4 (param_0.14: f32[4,10,16], param_1.17: f32[40,16]) -> f32[4,10,16] {
+  %param_1.17 = f32[40,16]{1,0} parameter(1)
+  %bitcast.16 = f32[4,10,16]{2,1,0} bitcast(f32[40,16]{1,0} %param_1.17), metadata={op_name="jit(<lambda>)/jit(main)/bqh,hd->bqd/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=28}
+  %param_0.14 = f32[4,10,16]{2,1,0} parameter(0)
+  ROOT %add.15 = f32[4,10,16]{2,1,0} add(f32[4,10,16]{2,1,0} %bitcast.16, f32[4,10,16]{2,1,0} %param_0.14), metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=29}
+}
+
+%fused_computation.5 (param_0.19: f32[48,40]) -> f32[4,10,16] {
+  %param_0.19 = f32[48,40]{1,0} parameter(0)
+  %bitcast.18 = f32[3,16,4,10]{3,2,1,0} bitcast(f32[48,40]{1,0} %param_0.19), metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %transpose.9 = f32[3,4,10,16]{2,1,3,0} transpose(f32[3,16,4,10]{3,2,1,0} %bitcast.18), dimensions={0,2,3,1}, metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/transpose" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %copy.5 = f32[3,4,10,16]{3,2,1,0} copy(f32[3,4,10,16]{2,1,3,0} %transpose.9), metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/transpose" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %slice.3 = f32[1,4,10,16]{3,2,1,0} slice(f32[3,4,10,16]{3,2,1,0} %copy.5), slice={[2:3], [0:4], [0:10], [0:16]}, metadata={op_name="jit(<lambda>)/jit(main)/slice" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  ROOT %bitcast.17 = f32[4,10,16]{2,1,0} bitcast(f32[1,4,10,16]{3,2,1,0} %slice.3), metadata={op_name="jit(<lambda>)/jit(main)/slice" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+}
+
+%fused_computation.6 (param_0.20: f32[4,10,10], param_1.19: f32[4,10]) -> f32[4,10,10] {
+  %param_0.20 = f32[4,10,10]{2,1,0} parameter(0)
+  %param_1.19 = f32[4,10]{1,0} parameter(1)
+  %broadcast.60 = f32[4,10,10]{2,1,0} broadcast(f32[4,10]{1,0} %param_1.19), dimensions={0,1}, metadata={op_name="jit(<lambda>)/jit(main)/div" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+  ROOT %divide.3 = f32[4,10,10]{2,1,0} divide(f32[4,10,10]{2,1,0} %param_0.20, f32[4,10,10]{2,1,0} %broadcast.60), metadata={op_name="jit(<lambda>)/jit(main)/div" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+}
+
+%fused_computation.7 (param_0.22: f32[4,10,10], param_1.22: f32[4,10]) -> f32[4,10,10] {
+  %param_0.22 = f32[4,10,10]{2,1,0} parameter(0)
+  %param_1.22 = f32[4,10]{1,0} parameter(1)
+  %constant.58 = f32[] constant(-inf)
+  %broadcast.62 = f32[4,10]{1,0} broadcast(f32[] %constant.58), dimensions={}
+  %maximum.1 = f32[4,10]{1,0} maximum(f32[4,10]{1,0} %param_1.22, f32[4,10]{1,0} %broadcast.62), metadata={op_name="jit(<lambda>)/jit(main)/max" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+  %broadcast.61 = f32[4,10,10]{2,1,0} broadcast(f32[4,10]{1,0} %maximum.1), dimensions={0,1}, metadata={op_name="jit(<lambda>)/jit(main)/sub" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+  %subtract.1 = f32[4,10,10]{2,1,0} subtract(f32[4,10,10]{2,1,0} %param_0.22, f32[4,10,10]{2,1,0} %broadcast.61), metadata={op_name="jit(<lambda>)/jit(main)/sub" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+  ROOT %exponential.1 = f32[4,10,10]{2,1,0} exponential(f32[4,10,10]{2,1,0} %subtract.1), metadata={op_name="jit(<lambda>)/jit(main)/exp" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+}
+
+%fused_computation.8 (param_0.27: f32[48,40]) -> f32[4,10,16] {
+  %param_0.27 = f32[48,40]{1,0} parameter(0)
+  %bitcast.20 = f32[3,16,4,10]{3,2,1,0} bitcast(f32[48,40]{1,0} %param_0.27), metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %transpose.10 = f32[3,4,10,16]{2,1,3,0} transpose(f32[3,16,4,10]{3,2,1,0} %bitcast.20), dimensions={0,2,3,1}, metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/transpose" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %copy.6 = f32[3,4,10,16]{3,2,1,0} copy(f32[3,4,10,16]{2,1,3,0} %transpose.10), metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/transpose" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %slice.4 = f32[1,4,10,16]{3,2,1,0} slice(f32[3,4,10,16]{3,2,1,0} %copy.6), slice={[1:2], [0:4], [0:10], [0:16]}, metadata={op_name="jit(<lambda>)/jit(main)/slice" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  ROOT %bitcast.19 = f32[4,10,16]{2,1,0} bitcast(f32[1,4,10,16]{3,2,1,0} %slice.4), metadata={op_name="jit(<lambda>)/jit(main)/slice" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+}
+
+%fused_computation.9 (param_0.33: f32[48,40]) -> f32[4,10,16] {
+  %param_0.33 = f32[48,40]{1,0} parameter(0)
+  %bitcast.22 = f32[3,16,4,10]{3,2,1,0} bitcast(f32[48,40]{1,0} %param_0.33), metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %transpose.11 = f32[3,4,10,16]{2,1,3,0} transpose(f32[3,16,4,10]{3,2,1,0} %bitcast.22), dimensions={0,2,3,1}, metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/transpose" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %copy.7 = f32[3,4,10,16]{3,2,1,0} copy(f32[3,4,10,16]{2,1,3,0} %transpose.11), metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/transpose" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %slice.5 = f32[1,4,10,16]{3,2,1,0} slice(f32[3,4,10,16]{3,2,1,0} %copy.7), slice={[0:1], [0:4], [0:10], [0:16]}, metadata={op_name="jit(<lambda>)/jit(main)/slice" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %constant.59 = f32[] constant(0.25)
+  %broadcast.63 = f32[1,4,10,16]{3,2,1,0} broadcast(f32[] %constant.59), dimensions={}
+  %multiply.31 = f32[1,4,10,16]{3,2,1,0} multiply(f32[1,4,10,16]{3,2,1,0} %slice.5, f32[1,4,10,16]{3,2,1,0} %broadcast.63), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=24}
+  ROOT %bitcast.21 = f32[4,10,16]{2,1,0} bitcast(f32[1,4,10,16]{3,2,1,0} %multiply.31), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=24}
+}
+
+%fused_computation.10 (param_0.38: f32[16], param_1.28: f32[4,10,16], param_2.19: f32[4,16]) -> f32[16,40] {
+  %param_1.28 = f32[4,10,16]{2,1,0} parameter(1)
+  %param_2.19 = f32[4,16]{1,0} parameter(2)
+  %broadcast.66 = f32[4,10,16]{2,1,0} broadcast(f32[4,16]{1,0} %param_2.19), dimensions={0,2}, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %multiply.33 = f32[4,10,16]{2,1,0} multiply(f32[4,10,16]{2,1,0} %param_1.28, f32[4,10,16]{2,1,0} %broadcast.66), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %param_0.38 = f32[16]{0} parameter(0)
+  %constant.60 = f32[] constant(1)
+  %broadcast.65 = f32[16]{0} broadcast(f32[] %constant.60), dimensions={}
+  %add.16 = f32[16]{0} add(f32[16]{0} %param_0.38, f32[16]{0} %broadcast.65), metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %broadcast.64 = f32[4,10,16]{2,1,0} broadcast(f32[16]{0} %add.16), dimensions={2}, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %multiply.32 = f32[4,10,16]{2,1,0} multiply(f32[4,10,16]{2,1,0} %multiply.33, f32[4,10,16]{2,1,0} %broadcast.64), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %transpose.12 = f32[16,4,10]{0,2,1} transpose(f32[4,10,16]{2,1,0} %multiply.32), dimensions={2,0,1}, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %copy.8 = f32[16,4,10]{2,1,0} copy(f32[16,4,10]{0,2,1} %transpose.12), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  ROOT %bitcast.23 = f32[16,40]{1,0} bitcast(f32[16,4,10]{2,1,0} %copy.8), metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+}
+
+%fused_computation.11 (param_0.41: f32[4,16]) -> f32[4,16] {
+  %param_0.41 = f32[4,16]{1,0} parameter(0)
+  %constant.62 = f32[] constant(0.1)
+  %broadcast.69 = f32[4,16]{1,0} broadcast(f32[] %constant.62), dimensions={}
+  %multiply.34 = f32[4,16]{1,0} multiply(f32[4,16]{1,0} %param_0.41, f32[4,16]{1,0} %broadcast.69), metadata={op_name="jit(<lambda>)/jit(main)/div" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=5}
+  %constant.61 = f32[] constant(1e-05)
+  %broadcast.67 = f32[4,16]{1,0} broadcast(f32[] %constant.61), dimensions={}
+  %add.17 = f32[4,16]{1,0} add(f32[4,16]{1,0} %multiply.34, f32[4,16]{1,0} %broadcast.67), metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  ROOT %rsqrt.5 = f32[4,16]{1,0} rsqrt(f32[4,16]{1,0} %add.17), metadata={op_name="jit(<lambda>)/jit(main)/rsqrt" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+}
+
+%fused_computation.12 (param_0.44: f32[3,16,16]) -> f32[48,16] {
+  %param_0.44 = f32[3,16,16]{2,1,0} parameter(0)
+  %transpose.13 = f32[3,16,16]{1,2,0} transpose(f32[3,16,16]{2,1,0} %param_0.44), dimensions={0,2,1}, metadata={op_name="layer.Wqkv"}
+  %copy.9 = f32[3,16,16]{2,1,0} copy(f32[3,16,16]{1,2,0} %transpose.13), metadata={op_name="layer.Wqkv"}
+  ROOT %bitcast.24 = f32[48,16]{1,0} bitcast(f32[3,16,16]{2,1,0} %copy.9), metadata={op_name="layer.Wqkv"}
+}
+
+ENTRY %main.123_spmd (param.2: f32[3,16,16], param.3: f32[16,16], param.5: f32[16,64], param.6: f32[64,16], param.1: f32[16], param.4: f32[16], param: f32[4,10,16]) -> f32[4,10,16] {
+  # Get the parameters
+  %param = f32[4,10,16]{2,1,0} parameter(6), sharding={devices=[8,1,1]<=[8]}, metadata={op_name="x"}
+  %constant = f32[] constant(0)
+  %param.1 = f32[16]{0} parameter(4), sharding={replicated}, metadata={op_name="layer.ln1_scale"}
+  %param.2 = f32[3,16,16]{2,1,0} parameter(0), sharding={replicated}, metadata={op_name="layer.Wqkv"}
+  %constant.34 = f32[] constant(-inf)
+  %param.3 = f32[16,16]{1,0} parameter(1), sharding={replicated}, metadata={op_name="layer.Wout"}
+  %param.4 = f32[16]{0} parameter(5), sharding={replicated}, metadata={op_name="layer.ln2_scale"}
+  %param.5 = f32[16,64]{1,0} parameter(2), sharding={replicated}, metadata={op_name="layer.Wmlp1"}
+  %param.6 = f32[64,16]{1,0} parameter(3), sharding={replicated}, metadata={op_name="layer.Wmlp2"}
+
+  # First RMS Norm in Transformer Layer
+  %multiply.0 = f32[4,10,16]{2,1,0} multiply(f32[4,10,16]{2,1,0} %param, f32[4,10,16]{2,1,0} %param), metadata={op_name="jit(<lambda>)/jit(main)/square" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=5}
+  %copy_bitcast_fusion.1 = f32[48,16]{1,0} fusion(f32[3,16,16]{2,1,0} %param.2), kind=kLoop, calls=%fused_computation.12, metadata={op_name="layer.Wqkv"}
+  %reduce = f32[4,16]{1,0} reduce(f32[4,10,16]{2,1,0} %multiply.0, f32[] %constant), dimensions={1}, to_apply=%region_0.29, metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=5}
+  %add_rsqrt_fusion.1 = f32[4,16]{1,0} fusion(f32[4,16]{1,0} %reduce), kind=kLoop, calls=%fused_computation.11, metadata={op_name="jit(<lambda>)/jit(main)/rsqrt" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %copy_bitcast_fusion = f32[16,40]{1,0} fusion(f32[16]{0} %param.1, f32[4,10,16]{2,1,0} %param, f32[4,16]{1,0} %add_rsqrt_fusion.1), kind=kLoop, calls=%fused_computation.10, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  
+  # Attention
+  %dot.6 = f32[48,40]{1,0} dot(f32[48,16]{1,0} %copy_bitcast_fusion.1, f32[16,40]{1,0} %copy_bitcast_fusion), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(<lambda>)/jit(main)/bld,3dh->3blh/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %multiply_bitcast_fusion.2 = f32[4,10,16]{2,1,0} fusion(f32[48,40]{1,0} %dot.6), kind=kLoop, calls=%fused_computation.9, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=24}
+  %slice_bitcast_fusion = f32[4,10,16]{2,1,0} fusion(f32[48,40]{1,0} %dot.6), kind=kLoop, calls=%fused_computation.5, metadata={op_name="jit(<lambda>)/jit(main)/slice" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %slice_bitcast_fusion.1 = f32[4,10,16]{2,1,0} fusion(f32[48,40]{1,0} %dot.6), kind=kLoop, calls=%fused_computation.8, metadata={op_name="jit(<lambda>)/jit(main)/slice" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=23}
+  %dot.1 = f32[4,10,10]{2,1,0} dot(f32[4,10,16]{2,1,0} %multiply_bitcast_fusion.2, f32[4,10,16]{2,1,0} %slice_bitcast_fusion.1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, metadata={op_name="jit(<lambda>)/jit(main)/bqh,bkh->bqk/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=25}
+  %reduce.1 = f32[4,10]{1,0} reduce(f32[4,10,10]{2,1,0} %dot.1, f32[] %constant.34), dimensions={2}, to_apply=%region_1.61, metadata={op_name="jit(<lambda>)/jit(main)/reduce_max" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+  %subtract_exponential_fusion = f32[4,10,10]{2,1,0} fusion(f32[4,10,10]{2,1,0} %dot.1, f32[4,10]{1,0} %reduce.1), kind=kLoop, calls=%fused_computation.7, metadata={op_name="jit(<lambda>)/jit(main)/exp" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+  %reduce.2 = f32[4,10]{1,0} reduce(f32[4,10,10]{2,1,0} %subtract_exponential_fusion, f32[] %constant), dimensions={2}, to_apply=%region_2.73, metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+  %broadcast_divide_fusion = f32[4,10,10]{2,1,0} fusion(f32[4,10,10]{2,1,0} %subtract_exponential_fusion, f32[4,10]{1,0} %reduce.2), kind=kLoop, calls=%fused_computation.6, metadata={op_name="jit(<lambda>)/jit(main)/div" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=26}
+  %dot.2 = f32[4,10,16]{2,1,0} dot(f32[4,10,10]{2,1,0} %broadcast_divide_fusion, f32[4,10,16]{2,1,0} %slice_bitcast_fusion), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(<lambda>)/jit(main)/bqk,bkh->bqh/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=27}
+  %bitcast.6 = f32[40,16]{1,0} bitcast(f32[4,10,16]{2,1,0} %dot.2), metadata={op_name="jit(<lambda>)/jit(main)/bqk,bkh->bqh/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=27}
+  %dot.7 = f32[40,16]{1,0} dot(f32[40,16]{1,0} %bitcast.6, f32[16,16]{1,0} %param.3), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(<lambda>)/jit(main)/bqh,hd->bqd/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=28}
+  %bitcast_add_fusion.1 = f32[4,10,16]{2,1,0} fusion(f32[4,10,16]{2,1,0} %param, f32[40,16]{1,0} %dot.7), kind=kLoop, calls=%fused_computation.4, metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=29}
+
+  # Second RMS Norm in Transformer Layer
+  %multiply.7 = f32[4,10,16]{2,1,0} multiply(f32[4,10,16]{2,1,0} %bitcast_add_fusion.1, f32[4,10,16]{2,1,0} %bitcast_add_fusion.1), metadata={op_name="jit(<lambda>)/jit(main)/square" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=5}
+  %reduce.3 = f32[4,16]{1,0} reduce(f32[4,10,16]{2,1,0} %multiply.7, f32[] %constant), dimensions={1}, to_apply=%region_3.89, metadata={op_name="jit(<lambda>)/jit(main)/reduce_sum" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=5}
+  %add_rsqrt_fusion = f32[4,16]{1,0} fusion(f32[4,16]{1,0} %reduce.3), kind=kLoop, calls=%fused_computation.3, metadata={op_name="jit(<lambda>)/jit(main)/rsqrt" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  %multiply_bitcast_fusion.1 = f32[40,16]{1,0} fusion(f32[16]{0} %param.4, f32[4,10,16]{2,1,0} %bitcast_add_fusion.1, f32[4,16]{1,0} %add_rsqrt_fusion), kind=kLoop, calls=%fused_computation.2, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=6}
+  
+  # MLP
+  %dot.8 = f32[40,64]{1,0} dot(f32[40,16]{1,0} %multiply_bitcast_fusion.1, f32[16,64]{1,0} %param.5), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(<lambda>)/jit(main)/bld,dm->blm/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=32}
+  %multiply_bitcast_fusion = f32[40,64]{1,0} fusion(f32[40,64]{1,0} %dot.8), kind=kLoop, calls=%fused_computation.1, metadata={op_name="jit(<lambda>)/jit(main)/mul" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=33}
+  %dot.9 = f32[40,16]{1,0} dot(f32[40,64]{1,0} %multiply_bitcast_fusion, f32[64,16]{1,0} %param.6), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(<lambda>)/jit(main)/blm,md->bld/dot_general" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=34}
+  ROOT %bitcast_add_fusion = f32[4,10,16]{2,1,0} fusion(f32[4,10,16]{2,1,0} %bitcast_add_fusion.1, f32[40,16]{1,0} %dot.9), kind=kLoop, calls=%fused_computation, metadata={op_name="jit(<lambda>)/jit(main)/add" source_file="/tmp/ipykernel_238229/3336730685.py" source_line=35}
+}
+
+

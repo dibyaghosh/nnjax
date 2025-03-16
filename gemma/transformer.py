@@ -13,20 +13,6 @@ from typing import Literal, Annotated
 
 Dtypelike = jnp.dtype | str
 
-
-def in_dtype(fn):
-    def wrapper(self, *args, **kwargs):
-        def to_dtype(x, dtype):
-            return x.astype(jnp.result_type(x)) if isinstance(x, Array) else x
-
-        dtype = [x for x in jax.tree.leaves((args, kwargs)) if isinstance(x, Array)][0].dtype  # fmt: skip
-        args, kwargs = jax.tree.map(lambda x: to_dtype(x, dtype), (args, kwargs))
-        out = fn(self, *args, **kwargs)
-        return jax.tree.map(lambda x: to_dtype(x, dtype), out)
-
-    return wrapper
-
-
 def trunc_norm_init(in_axis, out_axis, batch_axis):
     return nn.initializers.variance_scaling(
         1.0,
@@ -96,23 +82,20 @@ class Einsum:
     w: jax.Array
     dtype: Dtypelike = static_field()
 
-    @in_dtype
     def __call__(self, x, pattern: str):
-        return jnp.einsum(pattern, x, self.w.astype(x.dtype))
+        return jnp.einsum(pattern, x.astype(self.dtype), self.w.astype(self.dtype)).astype(x.dtype)
 
 
 @pytree_dataclass
 class RMSNorm:
     scale: jax.Array
 
-    @in_dtype
     def __call__(self, x: Float[Array, "..."]):
+        in_dtype = x.dtype
+        x = x.astype(jnp.float32)
         var = jnp.mean(jnp.square(x), axis=-1, keepdims=True)
-        return x * jax.lax.rsqrt(var + 1e-6) * (1 + self.scale)
-
-    @property
-    def dtype(self):
-        return "float32"  # Perform RMS norm in float32
+        out = x * jax.lax.rsqrt(var + 1e-6) * (1 + self.scale)
+        return out.astype(in_dtype)
 
     @classmethod
     def create(cls, _, embedding_dim: int):
@@ -122,13 +105,15 @@ class RMSNorm:
 
 @pytree_dataclass
 class FeedForward:
-    gating_einsum: Annotated[Einsum, "2 features hidden_dim"]
-    linear: Annotated[Einsum, "hidden_dim features"]
+    gating_einsum: Float[Array, "2 features hidden_dim"]
+    linear: Float[Array, "hidden_dim features"]
+    dtype: Dtypelike = static_field()
 
-    def __call__(self, x: Float[Array, "..."]):
-        ff_gate, ff1 = self.gating_einsum(x, "...d,2dh->2...h")
+    def __call__(self, x: Float[Array, "b l d"]):
+        ff_gate, ff1 = jnp.einsum("bld,2dh->2blh", x.astype(self.dtype), self.gating_einsum.astype(self.dtype))
         activations = nn.gelu(ff_gate) * ff1
-        return self.linear(activations, "...h,hd->...d")
+        out = jnp.einsum("blh,hd->bld", activations, self.linear.astype(self.dtype))
+        return out.astype(x.dtype)
 
     @classmethod
     def create(
@@ -145,7 +130,7 @@ class FeedForward:
         linear = trunc_norm_init(in_axis=(0,), out_axis=(1,), batch_axis=())(
             key_dense_2, (mlp_dim, embedding_dim)
         )
-        return cls(Einsum(gating_einsum, dtype=dtype), Einsum(linear, dtype=dtype))
+        return cls(gating_einsum, linear, dtype=dtype)
 
 
 def _apply_rope(x, *, positions, max_wavelength: float = 10_000):
@@ -181,7 +166,7 @@ class AttentionBlock:
         self,
         x: Float[Array, "b nq d"],
         positions: Float[Array, "b nq"],
-        mask: Float[Array, "b 1 nq nk"] | None = None,
+        mask: Float[Array, "b 1 nq nk"],
         kv_cache: LayerKVCache | None = None,
         cache_idx: int | None = None,
     ):
@@ -225,8 +210,7 @@ class AttentionBlock:
                 jnp.tanh(logits / self.attn_logits_softcap) * self.attn_logits_softcap
             )
 
-        if mask is not None:
-            logits = jnp.where(mask[:, :, None, :, :], logits, -2.3819763e38)
+        logits = jnp.where(mask[:, :, None, :, :], logits, -2.3819763e38)
         probs = nn.softmax(logits, axis=-1).astype(k.dtype)
         encoded = jnp.einsum("bngqk,bknh->bqngh", probs, v)
         encoded = einops.rearrange(
@@ -298,7 +282,7 @@ class TransformerLayer:
         self,
         x: Float[Array, "b l d"],
         positions: Float[Array, "b l"],
-        mask: Float[Array, "b 1 l l"] | None = None,
+        mask: Float[Array, "b 1 l l"],
         kv_cache: LayerKVCache | None = None,
         cache_idx: int | None = None,
     ) -> Float[Array, "b l d"]:
@@ -367,7 +351,7 @@ class Transformer:
         self,
         x: Float[Array, "b l d"],
         positions: Float[Array, "b l"],
-        mask: Float[Array, "b 1 l l"] | None = None,
+        mask: Float[Array, "b 1 l l"],
         kv_cache: LayerKVCache | None = None,
         cache_idx: int | None = None,
     ) -> Float[Array, "b l d"]:
@@ -419,20 +403,43 @@ class Embedder:
 class Gemma:
     embedder: Embedder
     transformer: Transformer
-
+    final_logits_softcap: float | None = static_field()
+    dtype: Dtypelike = static_field()
+    
     def __call__(
         self,
         tokens: Int[Array, "b l"],
-        positions: Float[Array, "b l"],
-        mask: Float[Array, "b 1 l cache_size"] | None = None,
+        positions: Float[Array, "b l"] = None,
+        mask: Float[Array, "b 1 l cache_size"] = None,
         kv_cache: LayerKVCache | None = None,
         cache_idx: int | None = None,
     ) -> tuple[Float[Array, "b l vocab_size"], LayerKVCache]:
-        embeddings = self.embedder.encode(tokens)
+        b, l = tokens.shape
+
+        embeddings = self.embedder.encode(tokens).astype(self.dtype)
+
+        if positions is None:
+            positions = jnp.broadcast_to(jnp.arange(l).astype(jnp.int32)[None, :], (b, l))
+
+        if mask is None:
+            # Add a causal mask to the query indices
+            if kv_cache is not None:
+                query_indices = jnp.arange(l) + cache_idx
+                key_indices = jnp.arange(kv_cache[0].shape[2])
+            else:
+                query_indices = jnp.arange(l)
+                key_indices = jnp.arange(l)
+
+            mask = query_indices[:, None] >= key_indices[None, :]
+            mask = jnp.broadcast_to(mask[None, None, :, :], (b, 1, len(query_indices), len(key_indices)))
+
         output_embeddings, new_kv_cache = self.transformer(
             embeddings, positions, mask=mask, kv_cache=kv_cache, cache_idx=cache_idx
         )
-        return self.embedder.decode(output_embeddings), new_kv_cache
+        logits = self.embedder.decode(output_embeddings)
+        if self.final_logits_softcap is not None:
+            logits = jnp.tanh(logits / self.final_logits_softcap) * self.final_logits_softcap
+        return logits, new_kv_cache
 
     def init_cache(
         self, batch_size: int, max_length: int, cache_dtype: Dtypelike
@@ -456,24 +463,17 @@ class Gemma:
     def create(cls, key: jax.Array, config: GemmaConfig):
         embedding = Embedder.create(key, config.vocab_size, config.width)
         transformer = Transformer.create(key, config)
-        return cls(embedding, transformer)
+        return cls(embedding, transformer, config.final_logits_softcap, config.dtype)
 
     @classmethod
     def create_from_pretrained(cls, pretrained_params: dict, config: GemmaConfig):
         import flax
         import numpy as np
 
-        params = flax.traverse_util.flatten_dict(pretrained_params, sep="/")
         model = jax.eval_shape(
             lambda: cls.create(key=jax.random.PRNGKey(0), config=config)
         )
-        new_params = {k: v for k, v in params.items() if "transformer/layer_" not in k}
-
-        for k in filter(lambda x: "transformer/layer_0/" in x, params.keys()):
-            new_params[k.replace("/layer_0/", "/layers/")] = np.stack(
-                [params[k.replace("layer_0", f"layer_{i}")] for i in range(26)]
-            )
-        new_params = flax.traverse_util.unflatten_dict(new_params, sep="/")
+        new_params = jax.tree.map(lambda x: x, pretrained_params) # Copy
         new_params["embedder"] = new_params["transformer"].pop("embedder")
         new_params = jax.tree.map(jnp.asarray, new_params)
         return nnjax.merge(model, new_params)

@@ -13,7 +13,7 @@ DEFAULT_PATH = epath.Path("/nfs/nfs2/users/dibya/gemma-2/")
 def _load_tokenizer(path: epath.Path = DEFAULT_PATH / "tokenizer.model"):
     import sentencepiece as spm
 
-    return spm.SentencePieceProcessor(model_file=path)
+    return spm.SentencePieceProcessor(model_file=str(path))
 
 
 def _load_params(path: epath.Path = DEFAULT_PATH / "gemma2-2b/"):
@@ -41,13 +41,13 @@ def _run_reference(params, tokens):
     reference_model = reference.Model(
         **{**reference.get_config("gemma2_2b").to_dict(), "vocab_size": 256_128}
     )
-    return reference_model.apply({"params": params}, tokens, train=False)
+    return reference_model.apply({"params": params['transformer']}, tokens)
 
 
 @jax.jit
-def _run_ours(params, images):
-    model = new_vit.ViT.create_from_pretrained(params, new_vit.ViTConfig.B16())
-    return model(images, train=False)
+def _run_ours(params, tokens):
+    model = transformer.Gemma.create_from_pretrained(params, transformer.GemmaConfig.gemma2_2b())
+    return model(tokens)
 
 
 def _cossim(a, b, axis=None):

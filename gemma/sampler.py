@@ -49,6 +49,7 @@ def sample(
     initial_tokens, input_mask = right_align(initial_tokens, input_mask)
 
     positions = jnp.cumsum(input_mask, axis=-1)
+
     padded_input_mask = jnp.pad(input_mask, [(0, 0), (0, max_length)]).astype(jnp.bool_)
     mask = jnp.logical_and(
         (jnp.arange(prefill_length)[:, None] >= jnp.arange(cache_size)[None, :]),
@@ -63,18 +64,22 @@ def sample(
         return jax.random.categorical(key, logits)
 
     def sample_step(state: SampleState):
+        cache_idx = state.idx + prefill_length
+
         key, new_key = jax.random.split(state.key)
         tokens = sample_tokens(state.last_logits, key)
         new_token_buffer = jax.lax.dynamic_update_slice_in_dim(
             state.token_buffer, tokens, state.idx, axis=1
         )
         done = jnp.logical_or(tokens == eos_token, state.done)
+        not_done = jnp.logical_not(done)
+
         new_input_mask = jax.lax.dynamic_update_slice_in_dim(
-            state.input_mask, done, state.idx, axis=1
+            state.input_mask, not_done, cache_idx, axis=1
         )
-        positions = state.last_positions + done.astype(jnp.int32)
+        positions = state.last_positions + not_done.astype(jnp.int32)
         mask = jnp.logical_and(
-            (state.idx >= jnp.arange(cache_size)[None, :]),
+            (cache_idx >= jnp.arange(cache_size)[None, :]),
             new_input_mask[:, None, None, :],
         )
         new_logits, kv_cache = model(
@@ -82,7 +87,7 @@ def sample(
             positions=positions,
             mask=mask,
             kv_cache=state.kv_cache,
-            cache_idx=state.idx + prefill_length,
+            cache_idx=cache_idx,
         )
 
         return dataclasses.replace(
@@ -113,4 +118,4 @@ def sample(
         key=key,
     )
     final_state = jax.lax.while_loop(_continue_sampling, sample_step, init_state)
-    return final_state
+    return final_state.token_buffer

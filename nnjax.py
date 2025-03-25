@@ -111,6 +111,7 @@ yaml.add_multi_representer(jax.Array, yaml_array)
 _INTERMEDIATES = None
 
 
+
 @contextlib.contextmanager
 def capture_intermediates(save_to: dict):
     global _INTERMEDIATES
@@ -123,6 +124,7 @@ def capture_intermediates(save_to: dict):
 
 
 def scan(fn, *args, **kwargs):
+    """jax.lax.scan but allows for capturing intermediate values"""
     if _INTERMEDIATES is None:
         return jax.lax.scan(fn, *args, **kwargs)
 

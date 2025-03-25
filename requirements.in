@@ -1,6 +1,6 @@
 jax[tpu]
 orbax-checkpoint
-numpy
+numpy<2
 flax
 wandb
 pyyaml
@@ -8,3 +8,10 @@ gcsfs
 jaxtyping
 einops
 pillow
+# For text training
+datasets
+transformers
+# For image training
+tensorflow-datasets
+# For jupyter notebook
+ipykernel

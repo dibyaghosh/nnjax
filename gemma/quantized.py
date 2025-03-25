@@ -1,7 +1,7 @@
 # ruff: noqa: F722
 from __future__ import annotations
 import jax.nn as nn
-from jaxtyping import Float, Array, Int
+from jaxtyping import Float, Array, Int, Shaped
 import jax.numpy as jnp
 import jax
 from nnjax import pytree_dataclass, static_field
@@ -10,111 +10,51 @@ import einops
 import dataclasses
 from functools import partial
 from typing import Literal, Annotated
-
-Dtypelike = jnp.dtype | str
-
-def trunc_norm_init(in_axis, out_axis, batch_axis):
-    return nn.initializers.variance_scaling(
-        1.0,
-        "fan_in",
-        "truncated_normal",
-        in_axis=in_axis,
-        out_axis=out_axis,
-        batch_axis=batch_axis,
-    )
-
-
-@dataclasses.dataclass  # just a normal dataclass
-class GemmaConfig:
-    width: int
-    depth: int
-    mlp_dim: int
-    num_heads: int
-    num_kv_heads: int
-    head_dim: int
-    norm_eps: float
-    vocab_size: int
-    dtype: Dtypelike
-    remat_policy: str
-    final_logits_softcap: float | None = None
-    attn_logits_softcap: float | None = None
-    query_pre_attn_norm: Literal["rsqrt_head_dim", "rsqrt_emb_per_head"] = (
-        "rsqrt_head_dim"
-    )
-    post_norms: bool = False
-
-    @classmethod
-    def gemma_small(cls, dtype: Dtypelike = "float32"):
-        return cls(
-            width=384,
-            depth=12,
-            mlp_dim=1536,
-            num_heads=6,
-            num_kv_heads=6,
-            head_dim=64,
-            norm_eps=1e-5,
-            vocab_size=32_000,
-            dtype=dtype,
-            remat_policy="nothing_saveable",
-        )
-
-    @classmethod
-    def gemma_gpt2_small(cls, dtype: Dtypelike = "float32"):
-        return cls(
-            width=768,
-            depth=12,
-            mlp_dim=768 * 4,
-            num_heads=12,
-            num_kv_heads=12,
-            head_dim=768 // 12,
-            norm_eps=1e-5,
-            vocab_size=50_257,
-            dtype=dtype,
-            remat_policy="nothing_saveable",
-        )
-
-    @classmethod
-    def gemma_2b(cls, dtype: Dtypelike = "float32"):
-        return cls(
-            width=2048,
-            depth=18,
-            mlp_dim=16_384,
-            num_heads=8,
-            num_kv_heads=1,
-            head_dim=256,
-            norm_eps=1e-6,
-            vocab_size=256_000,
-            dtype=dtype,
-            remat_policy="nothing_saveable",
-        )
-
-    @classmethod
-    def gemma2_2b(cls, dtype: Dtypelike = "float32"):
-        return cls(
-            width=2304,
-            depth=26,
-            mlp_dim=9216,
-            num_heads=8,
-            num_kv_heads=4,
-            head_dim=256,
-            norm_eps=1e-6,
-            vocab_size=256_000,
-            dtype=dtype,
-            final_logits_softcap=30.0,
-            attn_logits_softcap=50.0,
-            post_norms=True,
-            remat_policy="nothing_saveable",
-        )
-
+from .transformer import Dtypelike, trunc_norm_init, GemmaConfig
 
 @pytree_dataclass
-class Einsum:
+class MaybeQuantizedArray:
+    data: Shaped[Array, "..."]
+    scale: Array | None
+
+    @classmethod
+    def create(cls, data: Shaped[Array, "..."] | MaybeQuantizedArray, dtype: Dtypelike, axes: tuple | None = None):
+        dtype = jnp.dtype(dtype)
+
+        if isinstance(data, QuantizedArray):
+            return data.astype(dtype)
+
+        if isinstance(dtype, jnp.floating):
+            return QuantizedArray(data.astype(dtype), None)
+        else:
+            info = jnp.iinfo(dtype)
+            scale = jnp.clip(jnp.abs(data).max(axis=axes, keepdims=True), 1e-5) / ((info.max - info.min) / 2)
+            data = jnp.clip(jnp.round(data / scale), info.min, info.max).astype(dtype)
+            return cls(data, scale)
+
+    def astype(self, dtype: Dtypelike) -> Array:
+        data = self.data
+        if self.scale is not None:
+            data = data.astype(self.scale.dtype) * self.scale
+        return data.astype(dtype)
+
+@pytree_dataclass
+class QuantizedEinsum:
     w: jax.Array
-    dtype: Dtypelike = static_field()
+    dtype_mm: Dtypelike = static_field()
+    dtype_w: Dtypelike = static_field()
 
-    def __call__(self, x, pattern: str):
-        return jnp.einsum(pattern, x.astype(self.dtype), self.w.astype(self.dtype)).astype(x.dtype)
-
+    def __call__(self, x, pattern: str, x_contractions: tuple | None = None, w_contractions: tuple | None = None):
+        if jnp.issubdtype(self.dtype_mm, jnp.floating):
+            w = MaybeQuantizedArray.create(self.w, self.dtype_w).astype(self.dtype_mm)
+            return jnp.einsum(pattern, x.astype(self.dtype_mm), w).astype(x.dtype)
+        else: # We want to do the math actually in the quantized domain
+            og_dtype = x.dtype
+            x = MaybeQuantizedArray.create(x, self.dtype_mm, x_contractions)
+            w = MaybeQuantizedArray.create(self.w, self.dtype_mm, w_contractions)
+            int_out = jnp.einsum(pattern, x.data, w.data, preferred_element_type=jnp.int32)
+            scale_out = jnp.einsum(pattern, x.scale, w.scale)
+            return (int_out * scale_out).astype(og_dtype)
 
 @pytree_dataclass
 class RMSNorm:
@@ -137,12 +77,13 @@ class RMSNorm:
 class FeedForward:
     gating_einsum: Float[Array, "2 features hidden_dim"]
     linear: Float[Array, "hidden_dim features"]
-    dtype: Dtypelike = static_field()
+    dtype_mm: Dtypelike = static_field()
+    dtype_w: Dtypelike = static_field()
 
     def __call__(self, x: Float[Array, "b l d"]):#
-        ff_gate, ff1 = jnp.einsum("bld,2dh->2blh", x.astype(self.dtype), self.gating_einsum.astype(self.dtype))
+        ff_gate, ff1 = QuantizedEinsum(self.gating_einsum, self.dtype_mm, self.dtype_w)(x, "bld,2dh->2blh", x_contractions=(-1,), w_contractions=(1,))
         activations = nn.gelu(ff_gate) * ff1
-        out = jnp.einsum("blh,hd->bld", activations, self.linear.astype(self.dtype))
+        out = QuantizedEinsum(self.linear, self.dtype_mm, self.dtype_w)(activations, "blh,hd->bld", x_contractions=(-1,), w_contractions=(0,))
         return out.astype(x.dtype)
 
     @classmethod
@@ -179,9 +120,9 @@ LayerKVCache = tuple[Float[Array, "b cache_size n d"], Float[Array, "b cache_siz
 
 @pytree_dataclass
 class AttentionBlock:
-    q_einsum: Einsum
-    kv_einsum: Einsum
-    attn_vec_einsum: Einsum
+    q_einsum: QuantizedEinsum
+    kv_einsum: QuantizedEinsum
+    attn_vec_einsum: QuantizedEinsum
 
     num_heads: int = static_field()
     num_kv_heads: int = static_field()
@@ -201,8 +142,8 @@ class AttentionBlock:
         cache_idx: int | None = None,
     ):
         dtype = x.dtype
-        q = self.q_einsum(x, "bqd,ndh->bqnh")
-        k, v = self.kv_einsum(x, "bqd,2ndh->2bqnh")
+        q = self.q_einsum(x, "bqd,ndh->bqnh", x_contractions=(-1,), w_contractions=(1,))
+        k, v = self.kv_einsum(x, "bqd,2ndh->2bqnh", x_contractions=(-1,), w_contractions=(2,))
         q = _apply_rope(q, positions=positions)
         k = _apply_rope(k, positions=positions)
 
@@ -249,7 +190,7 @@ class AttentionBlock:
             n=self.num_kv_heads,
             g=self.num_heads // self.num_kv_heads,
         )
-        encoded = self.attn_vec_einsum(encoded, "bqnh,nhd->bqd")
+        encoded = self.attn_vec_einsum(encoded, "bqnh,nhd->bqd", x_contractions=(-2, -1), w_contractions=(0,1,))
         return encoded.astype(dtype), kv_cache
 
     @classmethod
@@ -308,7 +249,6 @@ class TransformerLayer:
     mlp: FeedForward
     post_ffw_norm: RMSNorm | None
 
-    @partial(jax.checkpoint, policy=jax.checkpoint_policies.save_any_names_but_these())
     def __call__(
         self,
         x: Float[Array, "b l d"],
